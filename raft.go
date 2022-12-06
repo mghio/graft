@@ -157,6 +157,47 @@ func (cm *ConsensusModule) AppendEntries(args AppendEntriesArgs, reply *AppendEn
 	return nil
 }
 
+// NewConsensusModule creates a new Cm with the given ID, list of peer IDs and
+// server. The ready channel signals the CM that all peers are connected and
+// it's safe to start its state machine.
+func NewConsensusModule(id int, peerIds []int, server *Server, ready <-chan interface{}) *ConsensusModule {
+	cm := new(ConsensusModule)
+	cm.id = id
+	cm.peerIds = peerIds
+	cm.server = server
+	cm.state = Follower
+	cm.votedFor = -1
+
+	go func() {
+		// The CM is quiescent until ready is signaled; then, it starts a countdown
+		// for leader election.
+		<-ready
+		cm.mu.Lock()
+		cm.electionResetEvent = time.Now()
+		cm.mu.Unlock()
+		cm.runElectionTimer()
+	}()
+
+	return cm
+}
+
+// Report reports the state of this CM.
+func (cm *ConsensusModule) Report() (id int, term int, isLeader bool) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	return cm.id, cm.currentTerm, cm.state == Leader
+}
+
+// Stop stops this CM, cleaning up its state. This method returns quickly, but
+// it may take a bit of time (up to ~election timeout) for all goroutines to
+// exit.
+func (cm *ConsensusModule) Stop() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.state = Dead
+	cm.dlog("becomes Dead")
+}
+
 // dlog logs a debugging message if DebugCM > 0
 func (cm *ConsensusModule) dlog(format string, args ...interface{}) {
 	if DebugCM > 0 {
