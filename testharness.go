@@ -25,6 +25,45 @@ type Harness struct {
 	t *testing.T
 }
 
+// NewHarness creates a new test Harness, initialized with n servers connected
+// to each other.
+func NewHarness(t *testing.T, n int) *Harness {
+	ns := make([]*Server, n)
+	connected := make([]bool, n)
+	ready := make(chan interface{})
+
+	// Create all Servers in this cluster, assign ids and peer ids.
+	for i := 0; i < n; i++ {
+		peerIds := make([]int, 0)
+		for p := 0; p < n; p++ {
+			if p != i {
+				peerIds = append(peerIds, p)
+			}
+		}
+
+		ns[i] = NewServer(i, peerIds, ready)
+		ns[i].Serve()
+	}
+
+	// Connect all peers to each other.
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			if i != j {
+				ns[i].ConnectToPeer(j, ns[j].GetListenAddr())
+			}
+		}
+		connected[i] = true
+	}
+	close(ready)
+
+	return &Harness{
+		cluster:   ns,
+		connected: connected,
+		n:         n,
+		t:         t,
+	}
+}
+
 // Shutdown shuts down all the servers in the harness and waits for them to
 // stop running.
 func (h *Harness) Shutdown() {
@@ -36,6 +75,18 @@ func (h *Harness) Shutdown() {
 	for i := 0; i < h.n; i++ {
 		h.cluster[i].Shutdown()
 	}
+}
+
+// DisconnectPeer disconnects a server from all other server in the cluster.
+func (h *Harness) DisconnectPeer(id int) {
+	tlog("Disconnect %d", id)
+	h.cluster[id].DisconnectAll()
+	for j := 0; j < h.n; j++ {
+		if j != id {
+			h.cluster[j].DisconnectToPeer(id)
+		}
+	}
+	h.connected[id] = false
 }
 
 // CheckSingleLeader checks that only a single server thinks it's the leader.
@@ -66,4 +117,13 @@ func (h *Harness) CheckSingleLeader() (int, int) {
 
 	h.t.Fatalf("leader not found")
 	return -1, -1
+}
+
+func tlog(format string, a ...interface{}) {
+	format = "[TEST]" + format
+	log.Printf(format, a...)
+}
+
+func sleepMs(n int) {
+	time.Sleep(time.Duration(n) * time.Millisecond)
 }

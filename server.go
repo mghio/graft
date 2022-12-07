@@ -132,6 +132,18 @@ type RPCProxy struct {
 	cm *ConsensusModule
 }
 
+// DisconnectToPeer disconnects this server from the peer identified by peerId.
+func (s *Server) DisconnectToPeer(peerId int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.peerClients[peerId] != nil {
+		err := s.peerClients[peerId].Close()
+		s.peerClients[peerId] = nil
+		return err
+	}
+	return nil
+}
+
 func (s *Server) Call(id int, serviceMethod string, args interface{}, reply interface{}) error {
 	s.mu.Lock()
 	peer := s.peerClients[id]
