@@ -89,6 +89,22 @@ func (h *Harness) DisconnectPeer(id int) {
 	h.connected[id] = false
 }
 
+// ReconnectPeer connects a server to all other servers in the cluster.
+func (h *Harness) ReconnectPeer(id int) {
+	tlog("Reconnect %d", id)
+	for j := 0; j < h.n; j++ {
+		if j != id {
+			if err := h.cluster[id].ConnectToPeer(j, h.cluster[j].GetListenAddr()); err != nil {
+				h.t.Fatal(err)
+			}
+			if err := h.cluster[j].ConnectToPeer(j, h.cluster[id].GetListenAddr()); err != nil {
+				h.t.Fatal(err)
+			}
+		}
+	}
+	h.connected[id] = true
+}
+
 // CheckSingleLeader checks that only a single server thinks it's the leader.
 // Returns the leader's id and term. It retries several times if no leader is
 // identified yet.
@@ -117,6 +133,18 @@ func (h *Harness) CheckSingleLeader() (int, int) {
 
 	h.t.Fatalf("leader not found")
 	return -1, -1
+}
+
+// CheckNoLeader checks that no connected server considers itself the leader.
+func (h *Harness) CheckNoLeader() {
+	for i := 0; i < h.n; i++ {
+		if h.connected[i] {
+			_, _, isLeader := h.cluster[i].cm.Report()
+			if isLeader {
+				h.t.Fatalf("server %d leader; want none", i)
+			}
+		}
+	}
 }
 
 func tlog(format string, a ...interface{}) {
