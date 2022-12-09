@@ -118,3 +118,26 @@ func TestElectionLeaderDisconnectThenReconnect5Peer(t *testing.T) {
 		t.Errorf("again term got %d; want %d", againTerm, newTerm)
 	}
 }
+
+func TestElectionFollowerComesBack(t *testing.T) {
+	defer leaktest.CheckTimeout(t, 100*time.Millisecond)
+
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
+
+	origLeaderId, origTerm := h.CheckSingleLeader()
+
+	otherId := (origLeaderId + 1) % 3
+	h.DisconnectPeer(otherId)
+	time.Sleep(650 * time.Millisecond)
+	h.ReconnectPeer(otherId)
+	sleepMs(150)
+
+	// We can't have an assertion on the new leader id here because it depends
+	// on the relative election timeouts. We can assert that the term changed,
+	// however, which implies that re-election has occurred.
+	_, newTerm := h.CheckSingleLeader()
+	if newTerm <= origTerm {
+		t.Errorf("newTerm=%d, origTerm=%d", newTerm, origTerm)
+	}
+}
