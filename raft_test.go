@@ -45,3 +45,22 @@ func TestElectionLeaderAndAnotherDisconnect(t *testing.T) {
 	h.ReconnectPeer(otherId)
 	h.CheckSingleLeader()
 }
+
+func TestDisconnectAllThenRestore(t *testing.T) {
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
+
+	sleepMs(100)
+	// Disconnect all servers from the start. There will be no leader.
+	for i := 0; i < 3; i++ {
+		h.DisconnectPeer(i)
+	}
+	sleepMs(450)
+	h.CheckNoLeader()
+
+	// Reconnect all servers. A leader will be found.
+	for i := 0; i < 3; i++ {
+		h.ReconnectPeer(i)
+	}
+	h.CheckSingleLeader()
+}
