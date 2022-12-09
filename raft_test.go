@@ -64,3 +64,26 @@ func TestDisconnectAllThenRestore(t *testing.T) {
 	}
 	h.CheckSingleLeader()
 }
+
+func TestElectionLeaderDisconnectThenReconnect(t *testing.T) {
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
+	origLeaderId, _ := h.CheckSingleLeader()
+
+	h.DisconnectPeer(origLeaderId)
+
+	sleepMs(350)
+	newLeaderId, newTerm := h.CheckSingleLeader()
+
+	h.ReconnectPeer(origLeaderId)
+	sleepMs(150)
+
+	againLeaderId, againTerm := h.CheckSingleLeader()
+
+	if newLeaderId != againLeaderId {
+		t.Errorf("again leader id got %d; want %d", againLeaderId, newLeaderId)
+	}
+	if againTerm != newTerm {
+		t.Errorf("again term got %d; want %d", againTerm, newTerm)
+	}
+}
