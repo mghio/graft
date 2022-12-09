@@ -1,6 +1,11 @@
 package graft
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/fortytw2/leaktest"
+)
 
 func TestElectionBasic(t *testing.T) {
 	h := NewHarness(t, 3)
@@ -73,6 +78,32 @@ func TestElectionLeaderDisconnectThenReconnect(t *testing.T) {
 	h.DisconnectPeer(origLeaderId)
 
 	sleepMs(350)
+	newLeaderId, newTerm := h.CheckSingleLeader()
+
+	h.ReconnectPeer(origLeaderId)
+	sleepMs(150)
+
+	againLeaderId, againTerm := h.CheckSingleLeader()
+
+	if newLeaderId != againLeaderId {
+		t.Errorf("again leader id got %d; want %d", againLeaderId, newLeaderId)
+	}
+	if againTerm != newTerm {
+		t.Errorf("again term got %d; want %d", againTerm, newTerm)
+	}
+}
+
+func TestElectionLeaderDisconnectThenReconnect5Peer(t *testing.T) {
+	defer leaktest.CheckTimeout(t, 100*time.Millisecond)()
+
+	h := NewHarness(t, 5)
+	defer h.Shutdown()
+
+	origLeaderId, _ := h.CheckSingleLeader()
+
+	h.DisconnectPeer(origLeaderId)
+	sleepMs(150)
+
 	newLeaderId, newTerm := h.CheckSingleLeader()
 
 	h.ReconnectPeer(origLeaderId)
