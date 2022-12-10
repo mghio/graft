@@ -141,3 +141,27 @@ func TestElectionFollowerComesBack(t *testing.T) {
 		t.Errorf("newTerm=%d, origTerm=%d", newTerm, origTerm)
 	}
 }
+
+func TestElectionDisconnectLoop(t *testing.T) {
+	defer leaktest.CheckTimeout(t, 100*time.Millisecond)
+
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
+
+	for cycle := 0; cycle < 5; cycle++ {
+		leaderId, _ := h.CheckSingleLeader()
+
+		h.DisconnectPeer(leaderId)
+		otherId := (leaderId + 1) % 3
+		h.DisconnectPeer(otherId)
+		sleepMs(310)
+		h.CheckNoLeader()
+
+		// Reconnect both.
+		h.ReconnectPeer(otherId)
+		h.ReconnectPeer(leaderId)
+
+		// Given it time to settle
+		sleepMs(150)
+	}
+}
