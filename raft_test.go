@@ -183,3 +183,17 @@ func TestCommitOneCommand(t *testing.T) {
 	sleepMs(250)
 	h.CheckCommittedN(42, 3)
 }
+
+func TestSubmitNonLeaderFails(t *testing.T) {
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
+
+	origLeaderId, _ := h.CheckSingleLeader()
+	sid := (origLeaderId + 1) % 3
+	tlog("submitting 42 to %d", sid)
+	isLeader := h.SubmitToServer(sid, 42)
+	if isLeader {
+		t.Errorf("want id=%d! leader, but it is", sid)
+	}
+	sleepMs(10)
+}
