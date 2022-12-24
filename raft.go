@@ -1,6 +1,8 @@
 package graft
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"log"
 	"math/rand"
@@ -53,6 +55,9 @@ type ConsensusModule struct {
 	// server is the containing this CM. It's used to issue RPC calls to peers
 	server *Server
 
+	// storage is used to persist state.
+	storage Storage
+
 	// commitChan is the channel where is CM is going to report committed log
 	// entries. It's passed in by the client during construction.
 	commitChan chan<- CommitEntry
@@ -61,6 +66,10 @@ type ConsensusModule struct {
 	// that commit new entries to the log to notify that these entries may be sent
 	// on commitChan.
 	newCommitReadyChan chan struct{}
+
+	// triggerAEChan is an internal notification channel used to trigger
+	// sending new AEs to followers when interesting changes occurred.
+	triggerAEChan chan struct{}
 
 	// Persistent Raft state on all servers
 	currentTerm int
@@ -76,6 +85,43 @@ type ConsensusModule struct {
 	// Volatile Raft state on leaders
 	nextIndex  map[int]int
 	matchIndex map[int]int
+}
+
+// NewConsensusModule creates a new CM with the given ID, list of peer IDs and
+// server. The ready channel signals the CM that all peers are connected, and
+// it's safe to start its state machine. commitChan is going to be used by the
+// CM to send log entries that have been committed by the Raft cluster.
+func NewConsensusModule(id int, peerIds []int, server *Server, storage Storage, ready <-chan interface{}, commitChan chan<- CommitEntry) *ConsensusModule {
+	cm := new(ConsensusModule)
+	cm.id = id
+	cm.peerIds = peerIds
+	cm.server = server
+	cm.storage = storage
+	cm.commitChan = commitChan
+	cm.newCommitReadyChan = make(chan struct{}, 16)
+	cm.triggerAEChan = make(chan struct{}, 1)
+	cm.state = Follower
+	cm.votedFor = -1
+	cm.commitIndex = -1
+	cm.lastApplied = -1
+	cm.nextIndex = make(map[int]int)
+	cm.matchIndex = make(map[int]int)
+
+	if cm.storage.HasData() {
+		cm.restoreFromStorage()
+	}
+
+	go func() {
+		// The CM is quiescent until ready is signaled; then, it starts a countdown
+		// for leader election.
+		<-ready
+		cm.mu.Lock()
+		cm.electionResetEvent = time.Now()
+		cm.mu.Unlock()
+		cm.runElectionTimer()
+	}()
+
+	return cm
 }
 
 // RequestVoteArgs see figure 2 in the Raft paper (https://raft.github.io/raft.pdf).
@@ -127,6 +173,7 @@ func (cm *ConsensusModule) RequestVote(args RequestVoteArgs, reply *RequestVoteR
 		reply.VoteGranted = false
 	}
 	reply.Term = cm.currentTerm
+	cm.persistToStorage()
 	cm.dlog("... RequestVote reply: %+v", reply)
 	return nil
 }
@@ -226,32 +273,9 @@ func (cm *ConsensusModule) AppendEntries(args AppendEntriesArgs, reply *AppendEn
 	}
 
 	reply.Term = cm.currentTerm
+	cm.persistToStorage()
 	cm.dlog("AppendEntries reply: %+v", *reply)
 	return nil
-}
-
-// NewConsensusModule creates a new Cm with the given ID, list of peer IDs and
-// server. The ready channel signals the CM that all peers are connected and
-// it's safe to start its state machine.
-func NewConsensusModule(id int, peerIds []int, server *Server, ready <-chan interface{}) *ConsensusModule {
-	cm := new(ConsensusModule)
-	cm.id = id
-	cm.peerIds = peerIds
-	cm.server = server
-	cm.state = Follower
-	cm.votedFor = -1
-
-	go func() {
-		// The CM is quiescent until ready is signaled; then, it starts a countdown
-		// for leader election.
-		<-ready
-		cm.mu.Lock()
-		cm.electionResetEvent = time.Now()
-		cm.mu.Unlock()
-		cm.runElectionTimer()
-	}()
-
-	return cm
 }
 
 // Report reports the state of this CM.
@@ -287,6 +311,59 @@ func (cm *ConsensusModule) Stop() {
 	defer cm.mu.Unlock()
 	cm.state = Dead
 	cm.dlog("becomes Dead")
+}
+
+// restoreFromStorage restores the persistent state of this CM from storage.
+// It should be called during constructor, before any concurrency concerns.
+func (cm *ConsensusModule) restoreFromStorage() {
+	if termData, found := cm.storage.Get("currentTerm"); found {
+		d := gob.NewDecoder(bytes.NewBuffer(termData))
+		if err := d.Decode(&cm.currentTerm); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Fatal("currentTerm not found in storage")
+	}
+
+	if votedData, found := cm.storage.Get("votedFor"); found {
+		d := gob.NewDecoder(bytes.NewBuffer(votedData))
+		if err := d.Decode(&cm.votedFor); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Fatal("votedFor not found in storage")
+	}
+
+	if logData, found := cm.storage.Get("log"); found {
+		d := gob.NewDecoder(bytes.NewBuffer(logData))
+		if err := d.Decode(&cm.log); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Fatal("log not found in storage")
+	}
+}
+
+// persistToStorage saves all of CM's persistent state in cm.storage.
+// Expects cm.mu to be locked.
+func (cm *ConsensusModule) persistToStorage() {
+	var termData bytes.Buffer
+	if err := gob.NewEncoder(&termData).Encode(cm.votedFor); err != nil {
+		log.Fatal(err)
+	}
+	cm.storage.Set("currentTerm", termData.Bytes())
+
+	var votedData bytes.Buffer
+	if err := gob.NewEncoder(&votedData).Encode(cm.votedFor); err != nil {
+		log.Fatal(err)
+	}
+	cm.storage.Set("votedFor", votedData.Bytes())
+
+	var logData bytes.Buffer
+	if err := gob.NewEncoder(&logData).Encode(cm.log); err != nil {
+		log.Fatal(err)
+	}
+	cm.storage.Set("log", logData.Bytes())
 }
 
 // dlog logs a debugging message if DebugCM > 0

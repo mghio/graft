@@ -38,7 +38,7 @@ func (ms *MapStorage) Set(key string, value []byte) {
 	ms.m[key] = value
 }
 
-func (ms *MapStorage) HashData() bool {
+func (ms *MapStorage) HasData() bool {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 	return len(ms.m) > 0

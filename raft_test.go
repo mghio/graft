@@ -165,3 +165,21 @@ func TestElectionDisconnectLoop(t *testing.T) {
 		sleepMs(150)
 	}
 }
+
+func TestCommitOneCommand(t *testing.T) {
+	defer leaktest.CheckTimeout(t, 100*time.Millisecond)()
+
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
+
+	origLeaderId, _ := h.CheckSingleLeader()
+
+	tlog("submitting 42 to %d", origLeaderId)
+	isLeader := h.SubmitToServer(origLeaderId, 42)
+	if !isLeader {
+		t.Errorf("want id=%d leader, but it's not", origLeaderId)
+	}
+
+	sleepMs(250)
+	h.CheckCommittedN(42, 3)
+}
